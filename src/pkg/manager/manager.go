@@ -58,7 +58,9 @@ func NewCredentialManager(mk *password.Request) (Manager, error) {
 		masterKey:   ep,
 	}
 
-	cm.timer.StartTimer()
+	if err = cm.timer.StartTimer(); err != nil {
+		return nil, fmt.Errorf("error creating credential manager: %w", err)
+	}
 
 	return cm, nil
 }
@@ -125,8 +127,8 @@ func (l *list) GetAllCredentials() (credentials []credential.Credential, err err
 		return
 	}
 
-	for _, credential := range l.credentials {
-		credentials = append(credentials, credential)
+	for _, c := range l.credentials {
+		credentials = append(credentials, c)
 	}
 
 	err = l.timer.ResetTimer()
