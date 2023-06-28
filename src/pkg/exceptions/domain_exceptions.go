@@ -33,3 +33,5 @@ var ErrCredentialNotFound = &domainError{err: "credential not found"}
 var ErrInvalidMasterKey = &domainError{err: "invalid master key"}
 
 var ErrTimerBlocked = &domainError{err: "timer is blocked"}
+
+var ErrNotMatchingPassword = &domainError{err: "passwords do not match"}

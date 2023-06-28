@@ -30,7 +30,7 @@ type Manager interface {
 // StatusHandler defines the interface for a status handler
 type StatusHandler interface {
 	Unblock(mk string) error
-	CheckStatus() (bool, error)
+	CheckStatus() (err error)
 }
 
 // MasterOperator defines the interface for a master key manager
@@ -43,16 +43,17 @@ type MasterOperator interface {
 // Operator defines the interface for a credential operator
 type Operator interface {
 	CreateCredential(request credential.CreateCredentialRequest) (credential.Credential, error)
-	GetCredential(name *credential.Name) (credential.Credential, error)
-	DeleteCredential(name *credential.Name) error
+	GetCredential(name *credential.Name, mk string) (credential.Credential, error)
+	DeleteCredential(name *credential.Name, mk string) error
 	GetAllCredentials() ([]credential.Credential, error)
 }
 
-// list is a credential manager
+// encryptedList is a credential manager
 type list struct {
-	credentials map[credential.Name]credential.Credential
-	timer       *timer.TimerManager
-	masterKey   *password.EncryptedPassword
+	credentials   map[credential.Name]credential.Credential
+	encryptedKeys map[credential.Name]password.SimplePassword
+	timer         *timer.TimerManager
+	masterKey     *password.EncryptedPassword
 }
 
 // NewCredentialManager creates a new credential manager cm and possible error err
@@ -83,14 +84,13 @@ func NewCredentialManager(mk *password.Request) (CredentialManager, error) {
 
 // CreateCredential creates a new credential c and possible error err
 func (l *list) CreateCredential(request credential.CreateCredentialRequest) (c credential.Credential, err error) {
-	if _, err = l.CheckStatus(); err != nil {
-		return
+	if err = l.CheckStatus(); err != nil {
+		return c, fmt.Errorf("error creating credential: %w", err)
 	}
-
-	cred, err := credential.NewSimpleCredential(request)
+	cred, err := createCredential(request)
 
 	if err != nil {
-		return
+		return c, fmt.Errorf("error creating credential: %w", err)
 	}
 	name := cred.GetName()
 	c = cred
@@ -99,32 +99,91 @@ func (l *list) CreateCredential(request credential.CreateCredentialRequest) (c c
 
 	err = l.timer.ResetTimer()
 
+	if err != nil {
+		delete(l.credentials, *name)
+		return c, fmt.Errorf("error creating credential: %w", err)
+	}
+
+	return
+}
+
+// createCredential is a factory creational method for a credential
+func createCredential(request credential.CreateCredentialRequest) (cred credential.Credential, err error) {
+	if request.IsEncrypted {
+		cred, err = credential.NewEncryptedCredential(request)
+		return
+	}
+	cred, err = credential.NewSimpleCredential(request)
 	return
 }
 
 // GetCredential returns a credential c and possible error err
-func (l *list) GetCredential(name *credential.Name) (c credential.Credential, err error) {
-	if _, err = l.CheckStatus(); err != nil {
-		return
-	}
-
+func (l *list) GetCredential(name *credential.Name, mk string) (c credential.Credential, err error) {
 	c, ok := l.credentials[*name]
+	// check if the credential is encrypted and the master key is empty or invalid
+	e, v := helpers.CheckEncryptionAndInputMasterKey(c, mk, l)
+	if e && !v {
+		goto masterKeyError
+	}
+	// if encrypted
+	if e {
+		// decrypt the password and assign it to the credential (simple credential)
+		c, err = l.decryptPassword(name, c)
+		if err != nil {
+			return nil, fmt.Errorf("error getting credential: %w", err)
+		}
+		// if the credential was successfully decrypted
+		// by pass the status check
+		goto byPassStatus
+	}
+	// if not encrypted, check the status
+	if err = l.CheckStatus(); err != nil {
+		return nil, fmt.Errorf("error getting credential: %w", err)
+	}
+byPassStatus:
+	// verify existence of the key, reset the timer and return credential
 	if !ok {
 		return nil, fmt.Errorf("error getting credential: %w", exceptions.ErrCredentialNotFound)
 	}
-
 	err = l.timer.ResetTimer()
-
 	return
+masterKeyError:
+	return nil, fmt.Errorf("error getting credential: %w", exceptions.ErrInvalidMasterKey)
+}
+
+func (l *list) decryptPassword(name *credential.Name, c credential.Credential) (*credential.SimpleCredential, error) {
+	// decrypted password
+	decryptPw, ok := l.encryptedKeys[*name]
+	if !ok {
+		return nil, exceptions.ErrCredentialNotFound
+	}
+
+	dpr, err := helpers.DecryptPassword(&decryptPw, c)
+
+	if err != nil {
+		return nil, err
+	}
+
+	sc, _ := credential.NewSimpleCredential(credential.CreateCredentialRequest{
+		Name:        *c.GetName(),
+		Account:     c.GetAccount(),
+		Description: c.GetDescription(),
+		Password:    dpr,
+		IsEncrypted: false,
+	})
+
+	return sc, err
 }
 
 // DeleteCredential deletes a credential c and possible error err
-func (l *list) DeleteCredential(name *credential.Name) (err error) {
-	if _, err = l.CheckStatus(); err != nil {
-		return
+func (l *list) DeleteCredential(name *credential.Name, mk string) (err error) {
+	if err = l.CheckStatus(); err != nil {
+		return fmt.Errorf("error deleting credential: %w", err)
 	}
 
-	_, err = l.GetCredential(name)
+	// refactor with just checking encryption and
+	// avoid all flow of creating a struct to delete from list
+	_, err = l.GetCredential(name, mk)
 
 	if err != nil {
 		return
@@ -139,8 +198,8 @@ func (l *list) DeleteCredential(name *credential.Name) (err error) {
 
 // GetAllCredentials returns all credentials c and possible error err
 func (l *list) GetAllCredentials() (credentials []credential.Credential, err error) {
-	if _, err = l.CheckStatus(); err != nil {
-		return
+	if err = l.CheckStatus(); err != nil {
+		return credentials, fmt.Errorf("error getting all credentials: %w", err)
 	}
 
 	for _, c := range l.credentials {
@@ -176,7 +235,7 @@ func (l *list) UpdateMasterKey(previous, request *password.Request) (ok bool, er
 	return
 }
 
-// InputMasterKey inputs the master key
+// InputMasterKey inputs the master key and verifies it
 func (l *list) InputMasterKey(request *password.Request) (ok bool, err error) {
 	ok = l.masterKey.VerifyPassword(string(*request))
 
@@ -197,9 +256,9 @@ func (l *list) Unblock(mk string) (err error) {
 }
 
 // CheckStatus checks the status of the timer
-func (l *list) CheckStatus() (ok bool, err error) {
-	if ok, err = helpers.CheckTimer(l.timer); err != nil || ok {
-		return false, fmt.Errorf("error checking status: %w", err)
+func (l *list) CheckStatus() (err error) {
+	if ok, err := helpers.CheckTimer(l.timer); err != nil || ok {
+		return fmt.Errorf("error checking status: %w", err)
 	}
 
 	return

@@ -6,13 +6,13 @@ import (
 	"github.com/sosalejandro/credentials/src/pkg/password"
 )
 
-type SimpleCredential struct {
+type EncryptedCredential struct {
 	name                 *Name
 	account, description string
-	password             password.ReadPassword
+	password             password.EncryptionPassword
 }
 
-func NewSimpleCredential(request CreateCredentialRequest) (*SimpleCredential, error) {
+func NewEncryptedCredential(request CreateCredentialRequest) (*EncryptedCredential, error) {
 	if request.Name == "" {
 		return nil, fmt.Errorf("error creating credential: %w", exceptions.ErrCredentialNameEmpty)
 	}
@@ -25,13 +25,13 @@ func NewSimpleCredential(request CreateCredentialRequest) (*SimpleCredential, er
 		return nil, fmt.Errorf("error creating credential: %w", exceptions.ErrCredentialPasswordEmpty)
 	}
 
-	pw, err := password.NewSimplePassword(request.Password)
+	pw, err := password.NewEncryptedPassword(request.Password)
 
 	if err != nil {
 		return nil, fmt.Errorf("error creating credential: %w", err)
 	}
 
-	credential := &SimpleCredential{
+	credential := &EncryptedCredential{
 		name:        &request.Name,
 		account:     request.Account,
 		description: request.Description,
@@ -41,19 +41,19 @@ func NewSimpleCredential(request CreateCredentialRequest) (*SimpleCredential, er
 	return credential, nil
 }
 
-func (c *SimpleCredential) GetName() *Name {
+func (c *EncryptedCredential) GetName() *Name {
 	return c.name
 }
 
-func (c *SimpleCredential) GetAccount() string {
+func (c *EncryptedCredential) GetAccount() string {
 	return c.account
 }
 
-func (c *SimpleCredential) GetDescription() string {
+func (c *EncryptedCredential) GetDescription() string {
 	return c.description
 }
 
-func (c *SimpleCredential) GetPassword() (pw string, err error) {
+func (c *EncryptedCredential) GetPassword() (pw string, err error) {
 	if _, ok := c.password.(password.ReadPassword); !ok {
 		return "", fmt.Errorf("error getting password: %w", exceptions.ErrPasswordEmpty)
 	}
@@ -63,6 +63,6 @@ func (c *SimpleCredential) GetPassword() (pw string, err error) {
 	return
 }
 
-func (c *SimpleCredential) IsEncrypted() bool {
-	return false
+func (c *EncryptedCredential) IsEncrypted() bool {
+	return true
 }

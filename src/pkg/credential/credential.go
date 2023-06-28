@@ -8,6 +8,7 @@ type CreateCredentialRequest struct {
 	Name                 Name
 	Account, Description string
 	Password             *password.Request
+	IsEncrypted          bool
 }
 
 type Credential interface {
@@ -15,4 +16,5 @@ type Credential interface {
 	GetAccount() string
 	GetDescription() string
 	GetPassword() (string, error)
+	IsEncrypted() bool
 }

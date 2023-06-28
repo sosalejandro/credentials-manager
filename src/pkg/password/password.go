@@ -11,4 +11,5 @@ type Password interface {
 type EncryptionPassword interface {
 	Hash(s string) ([]byte, error)
 	VerifyPassword(s string) bool
+	ReadPassword
 }

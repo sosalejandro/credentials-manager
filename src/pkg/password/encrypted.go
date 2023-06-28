@@ -57,3 +57,7 @@ func (p *EncryptedPassword) Set(pr *Request) (ok bool, err error) {
 
 	return
 }
+
+func (p *EncryptedPassword) Get() string {
+	return string(*p)
+}
