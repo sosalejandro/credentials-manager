@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/sosalejandro/credentials/src/pkg/credential"
 	"github.com/sosalejandro/credentials/src/pkg/exceptions"
+	"github.com/sosalejandro/credentials/src/pkg/helpers"
 	"github.com/sosalejandro/credentials/src/pkg/password"
 	"github.com/sosalejandro/timer"
 	"github.com/sosalejandro/timer/domain"
@@ -14,18 +15,32 @@ var (
 	TimeDuration = 1 * time.Nanosecond
 )
 
+// CredentialManager defines the interface for a credential manager
+type CredentialManager interface {
+	Manager
+	StatusHandler
+}
+
+// Manager defines the interface for a manager
 type Manager interface {
 	MasterOperator
 	Operator
 }
 
+// StatusHandler defines the interface for a status handler
+type StatusHandler interface {
+	Unblock(mk string) error
+	CheckStatus() (bool, error)
+}
+
+// MasterOperator defines the interface for a master key manager
 type MasterOperator interface {
 	CreateMasterKey(request *password.Request) (ok bool, err error)
 	UpdateMasterKey(previous, request *password.Request) (ok bool, err error)
 	InputMasterKey(request *password.Request) (ok bool, err error)
 }
 
-// Operator defines the interface for a credential manager
+// Operator defines the interface for a credential operator
 type Operator interface {
 	CreateCredential(request credential.CreateCredentialRequest) (credential.Credential, error)
 	GetCredential(name *credential.Name) (credential.Credential, error)
@@ -40,7 +55,8 @@ type list struct {
 	masterKey   *password.EncryptedPassword
 }
 
-func NewCredentialManager(mk *password.Request) (Manager, error) {
+// NewCredentialManager creates a new credential manager cm and possible error err
+func NewCredentialManager(mk *password.Request) (CredentialManager, error) {
 	t, err := domain.NewTimer(TimeDuration)
 	if err != nil {
 		return nil, fmt.Errorf("error creating credential manager: %w", err)
@@ -67,7 +83,7 @@ func NewCredentialManager(mk *password.Request) (Manager, error) {
 
 // CreateCredential creates a new credential c and possible error err
 func (l *list) CreateCredential(request credential.CreateCredentialRequest) (c credential.Credential, err error) {
-	if _, err = l.checkTimer(); err != nil {
+	if _, err = l.CheckStatus(); err != nil {
 		return
 	}
 
@@ -88,7 +104,7 @@ func (l *list) CreateCredential(request credential.CreateCredentialRequest) (c c
 
 // GetCredential returns a credential c and possible error err
 func (l *list) GetCredential(name *credential.Name) (c credential.Credential, err error) {
-	if _, err = l.checkTimer(); err != nil {
+	if _, err = l.CheckStatus(); err != nil {
 		return
 	}
 
@@ -104,7 +120,7 @@ func (l *list) GetCredential(name *credential.Name) (c credential.Credential, er
 
 // DeleteCredential deletes a credential c and possible error err
 func (l *list) DeleteCredential(name *credential.Name) (err error) {
-	if _, err = l.checkTimer(); err != nil {
+	if _, err = l.CheckStatus(); err != nil {
 		return
 	}
 
@@ -123,7 +139,7 @@ func (l *list) DeleteCredential(name *credential.Name) (err error) {
 
 // GetAllCredentials returns all credentials c and possible error err
 func (l *list) GetAllCredentials() (credentials []credential.Credential, err error) {
-	if _, err = l.checkTimer(); err != nil {
+	if _, err = l.CheckStatus(); err != nil {
 		return
 	}
 
@@ -171,28 +187,19 @@ func (l *list) InputMasterKey(request *password.Request) (ok bool, err error) {
 	return
 }
 
-// unblockTimer unblocks the timer
-func (l *list) unblockTimer(mk *password.EncryptedPassword) (err error) {
-	// check mk is correct and unblock timer
-	if ok := l.masterKey.VerifyPassword(string(*mk)); !ok {
-		return fmt.Errorf("error unblocking timer: %w", exceptions.ErrInvalidMasterKey)
+// Unblock unblocks the timer
+func (l *list) Unblock(mk string) (err error) {
+	if err = helpers.UnblockTimer(mk, l.masterKey, l.timer); err != nil {
+		return fmt.Errorf("error unblocking: %w", err)
 	}
-
-	err = l.timer.ResetTimer()
 
 	return
 }
 
-// checkTimer checks if the timer is blocked
-func (l *list) checkTimer() (ok bool, err error) {
-	ok, err = l.timer.IsTimerBlocked()
-
-	if err != nil {
-		return
-	}
-
-	if ok {
-		return ok, fmt.Errorf("error creating credential: %w", exceptions.ErrTimerBlocked)
+// CheckStatus checks the status of the timer
+func (l *list) CheckStatus() (ok bool, err error) {
+	if ok, err = helpers.CheckTimer(l.timer); err != nil || ok {
+		return false, fmt.Errorf("error checking status: %w", err)
 	}
 
 	return
